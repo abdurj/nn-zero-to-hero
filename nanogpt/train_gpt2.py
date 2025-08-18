@@ -45,13 +45,17 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, n_head, T, C // n_head)
         
         # masked multi-head causal self-attention
-        att = q @ k.transpose(-2, -1) * (1.0 / math.sqrt(k.size(-1)))  # (B, n_head, T, T)
-        att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf')) # apply causal mask
-        att = F.softmax(att, dim=-1) # softmax over last dim
-        y = att @ v  # (B, n_head, T, C // n_head)
-        y = y.transpose(1, 2).contiguous().view(B, T, C)  # (B, T, n_head, C // n_head) --> (B, T, C) # concatenate heads
+        # att = q @ k.transpose(-2, -1) * (1.0 / math.sqrt(k.size(-1)))  # (B, n_head, T, T)
+        # att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf')) # apply causal mask
+        # att = F.softmax(att, dim=-1) # softmax over last dim
+        # y = att @ v  # (B, n_head, T, C // n_head)
         
-        # output projection
+        # TODO: implement FlashAttention myself
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+       
+        # concat heads
+        y = y.transpose(1, 2).contiguous().view(B, T, C)  # (B, T, n_head, C // n_head) --> (B, T, C) # concatenate heads
+        # project back to embedding space
         y = self.c_proj(y)
         
         return y
