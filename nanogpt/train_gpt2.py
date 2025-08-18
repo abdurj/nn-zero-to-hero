@@ -222,6 +222,8 @@ class DataLoader:
 num_return_sequences = 5
 max_length = 30
 
+import time
+
 DEVICE = 'cpu'
 if torch.cuda.is_available():
     DEVICE = 'cuda'
@@ -236,13 +238,14 @@ print(f"Using device: {DEVICE}")
 # ------------
 # model = GPT.from_pretrained('gpt2')
 
-train_loader = DataLoader(B=4, T=32)  # batch size 4, sequence length 32
+train_loader = DataLoader(B=16, T=1024)  # batch size 16, sequence length 1024
 model = GPT(GPTConfig())
 model = model.to(DEVICE)
 
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
+    t0 = time.time()
     # sample a batch of data
     x, y = train_loader.next_batch()
     x, y = x.to(DEVICE), y.to(DEVICE)  # move to device
@@ -257,7 +260,10 @@ for i in range(50):
     # optimization step
     optimizer.step()
     
-    print(f"Step {i}, Loss: {loss.item()}")
+    torch.cuda.synchronize()
+    t1 = time.time()
+    dt = (t1 - t0) * 1000
+    print(f"Step {i}, Time: {dt:.2f} ms, Loss: {loss.item()}")
 
 import sys
 sys.exit(0)
