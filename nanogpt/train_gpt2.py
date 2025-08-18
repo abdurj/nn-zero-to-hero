@@ -4,6 +4,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from utils import load_offline_gpt2_encoding
 
 class MLP(nn.Module):
     def __init__(self, config):
@@ -226,7 +227,8 @@ class DataLoader:
             text = f.read()
         
         import tiktoken
-        enc = tiktoken.get_encoding("gpt2")
+        enc = load_offline_gpt2_encoding()  # load the offline GPT-2 encoding
+        print(f"Encoding: {enc.name}")
         tokens = enc.encode(text)
         self.tokens = torch.tensor(tokens)
         print(f"Total Tokens: {len(self.tokens)}")
@@ -260,6 +262,16 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 print(f"Using device: {DEVICE}")
 
+# GPT2 Batch Size is 0.5M tokens per step
+total_batch_size = 2**19
+# we cant fit this in memory, so we use micro-batching
+B = 16 # microbatch size
+T = 1024 # sequence length
+assert total_batch_size % (B*T) == 0, "Total batch size must be divisible by microbatch size"
+grad_acccum_steps = total_batch_size // (B * T)  # number of gradient accumulation steps
+print(f"Total batch size: {total_batch_size}")
+print(f"Gradient accumulation steps: {grad_acccum_steps}")
+
 train_loader = DataLoader(B=16, T=1024)  # batch size 16, sequence length 1024
 
 torch.set_float32_matmul_precision('high')
@@ -267,6 +279,7 @@ torch.set_float32_matmul_precision('high')
 # model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig(vocab_size=50304))
 model = model.to(DEVICE)
+print("Torch Compile")
 model = torch.compile(model)
 
 max_lr = 6e-4
@@ -286,22 +299,26 @@ def get_lr(it):
     coeff = 0.5 * (1 + math.cos(math.pi * decay_ratio))  # cosine decay
     return min_lr + coeff * (max_lr - min_lr)
     
-
-# optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
 optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=max_lr, device=DEVICE)
 for step in range(max_steps):
     t0 = time.time()
-    # sample a batch of data
-    x, y = train_loader.next_batch()
-    x, y = x.to(DEVICE), y.to(DEVICE)  # move to device
-    
-    # forward pass
-    with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):
-        logits, loss  = model(x, y)  # (B, T, vocab_size)
-    
-    # backward pass
     optimizer.zero_grad()
-    loss.backward()
+    
+    loss_accum = 0.0
+    for micro_step in range(grad_acccum_steps):
+        # sample a batch of data
+        x, y = train_loader.next_batch()
+        x, y = x.to(DEVICE), y.to(DEVICE)  # move to device
+        
+        # forward pass
+        with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):
+            logits, loss  = model(x, y)  # (B, T, vocab_size)
+        
+        loss /= grad_acccum_steps  # scale loss for gradient accumulation
+        loss_accum += loss.detach()  # accumulate loss for logging
+        # backward pass
+        loss.backward()
+        
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # gradient clipping
 
     # optimization step
@@ -313,8 +330,8 @@ for step in range(max_steps):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0) * 1000
-    throughput = (train_loader.B * train_loader.T) / (t1 - t0)  # tokens per second
-    print(f"Step {step:4d}, Loss: {loss.item():.6f}, LR: {lr:.4e}, norm: {norm:.4f} Time: {dt:.2f} ms, Throughput: {throughput:.2f} tokens/s")
+    throughput = (train_loader.B * train_loader.T * grad_acccum_steps) / (t1 - t0)  # tokens per second
+    print(f"Step {step:4d}, Loss: {loss_accum.item():.6f}, LR: {lr:.4e}, norm: {norm:.4f} Time: {dt:.2f} ms, Throughput: {throughput:.2f} tokens/s")
 
 import sys
 sys.exit(0)
