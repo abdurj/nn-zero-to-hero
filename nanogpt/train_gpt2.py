@@ -241,7 +241,7 @@ train_loader = DataLoader(B=16, T=1024)  # batch size 16, sequence length 1024
 torch.set_float32_matmul_precision('high')
 
 # model = GPT.from_pretrained('gpt2')
-model = GPT(GPTConfig())
+model = GPT(GPTConfig(vocab_size=50304))
 model = model.to(DEVICE)
 model = torch.compile(model)
 
