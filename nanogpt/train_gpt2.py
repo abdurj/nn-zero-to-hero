@@ -239,6 +239,7 @@ torch.set_float32_matmul_precision('high')
 # model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig())
 model = model.to(DEVICE)
+model = torch.compile(model)
 
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
