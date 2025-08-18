@@ -24,6 +24,7 @@ class CausalSelfAttention(nn.Module):
         assert config.n_embd % config.n_head == 0, "n_embd must be divisible by n_head"
         self.c_attn = nn.Linear(config.n_embd, config.n_embd * 3)  # query, key, value
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj.NANOGPT_SCALE_LIMIT = 1
         
         self.n_head = config.n_head
         self.n_embd = config.n_embd
@@ -34,20 +35,25 @@ class CausalSelfAttention(nn.Module):
 
     def forward(self, x):
         B, T, C = x.shape
+        # get QKV projections
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=-1)
+        
         # split into heads
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, n_head, T, C // n_head)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, n_head, T, C // n_head)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, n_head, T, C // n_head)
-        # self-attention
+        
+        # masked multi-head causal self-attention
         att = q @ k.transpose(-2, -1) * (1.0 / math.sqrt(k.size(-1)))  # (B, n_head, T, T)
         att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf')) # apply causal mask
         att = F.softmax(att, dim=-1) # softmax over last dim
         y = att @ v  # (B, n_head, T, C // n_head)
         y = y.transpose(1, 2).contiguous().view(B, T, C)  # (B, T, n_head, C // n_head) --> (B, T, C) # concatenate heads
+        
         # output projection
         y = self.c_proj(y)
+        
         return y
 
 class Block(nn.Module):
@@ -89,6 +95,22 @@ class GPT(nn.Module):
         
         # weight sharing 
         self.transformer.wte.weight = self.lm_head.weight  # share weights between token embeddings and output layer
+
+        # init params
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            # initialize linear layers with normal distribution
+            std = 0.02
+            if hasattr(module, 'NANOGPT_SCALE_LIMIT'):
+                # control growth of residual stream based on number of layers
+                std *= (2 * self.config.n_layer) ** -0.5
+            
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        elif isinstance(module, nn.Embedding):
+            # initialize embeddings with normal distribution
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -205,6 +227,10 @@ if torch.cuda.is_available():
     DEVICE = 'cuda'
 elif torch.backends.mps.is_available():
     DEVICE = 'mps'
+
+torch.manual_seed(1337)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(1337)
 
 print(f"Using device: {DEVICE}")
 # ------------
