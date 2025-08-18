@@ -246,7 +246,7 @@ model = model.to(DEVICE)
 model = torch.compile(model)
 
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
 for i in range(50):
     t0 = time.time()
     # sample a batch of data
@@ -260,6 +260,7 @@ for i in range(50):
     # backward pass
     optimizer.zero_grad()
     loss.backward()
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # gradient clipping
     
     # optimization step
     optimizer.step()
@@ -268,7 +269,7 @@ for i in range(50):
     t1 = time.time()
     dt = (t1 - t0) * 1000
     throughput = (train_loader.B * train_loader.T) / (t1 - t0)  # tokens per second
-    print(f"Step {i}, Loss: {loss.item()}, Time: {dt:.2f} ms, Throughput: {throughput:.2f} tokens/s")
+    print(f"Step {i}, Loss: {loss.item()}, norm: {norm:.4f} Time: {dt:.2f} ms, Throughput: {throughput:.2f} tokens/s")
 
 import sys
 sys.exit(0)
