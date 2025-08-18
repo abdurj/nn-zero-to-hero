@@ -249,7 +249,8 @@ for i in range(50):
     x, y = x.to(DEVICE), y.to(DEVICE)  # move to device
     
     # forward pass
-    logits, loss  = model(x, y)  # (B, T, vocab_size)
+    with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):
+        logits, loss  = model(x, y)  # (B, T, vocab_size)
     
     # backward pass
     optimizer.zero_grad()
