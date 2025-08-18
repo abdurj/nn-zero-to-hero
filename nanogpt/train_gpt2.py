@@ -137,7 +137,7 @@ class GPT(nn.Module):
         return model
     
     
-    def forward(self, idx):
+    def forward(self, idx, targets=None):
         B, T = idx.shape
         assert T <= self.config.block_size, "Cannot forward sequence of length %d, block size is only %d" % (T, self.config.block_size)
 
@@ -156,19 +156,88 @@ class GPT(nn.Module):
         
         # get logits through lm_head
         logits = self.lm_head(x) # (B, T, vocab_size)
-        return logits
         
+        loss = None
+        if targets is not None:
+            # flatten logits and targets for cross-entropy loss
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        return logits, loss
+
+
+class DataLoader:
+    def __init__(self, B, T):
+        self.B = B
+        self.T = T
+        
+        with open('input.txt', 'r') as f:
+            text = f.read()
+        
+        import tiktoken
+        enc = tiktoken.get_encoding("gpt2")
+        tokens = enc.encode(text)
+        self.tokens = torch.tensor(tokens)
+        print(f"Total Tokens: {len(self.tokens)}")
+        print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
+
+        self.current_pos = 0
+        
+    def next_batch(self):
+        B, T = self.B, self.T
+        step = B * T
+        buf = self.tokens[self.current_pos:self.current_pos + step + 1] # +1 for the next token for targets
+        x = buf[:-1].view(B, T)  # input data
+        y = buf[1:].view(B, T)   # output data
+        self.current_pos += step
+        if self.current_pos + (step + 1) >= len(self.tokens):
+            self.current_pos = 0 
+        return x, y
+            
+
 # ----------------------------------------
 num_return_sequences = 5
 max_length = 30
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+DEVICE = 'cpu'
+if torch.cuda.is_available():
+    DEVICE = 'cuda'
+elif torch.backends.mps.is_available():
+    DEVICE = 'mps'
+
+print(f"Using device: {DEVICE}")
 # ------------
-model = GPT.from_pretrained('gpt2')
+# model = GPT.from_pretrained('gpt2')
+
+train_loader = DataLoader(B=4, T=32)  # batch size 4, sequence length 32
+model = GPT(GPTConfig())
+model = model.to(DEVICE)
+
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+for i in range(50):
+    # sample a batch of data
+    x, y = train_loader.next_batch()
+    x, y = x.to(DEVICE), y.to(DEVICE)  # move to device
+    
+    # forward pass
+    logits, loss  = model(x, y)  # (B, T, vocab_size)
+    
+    # backward pass
+    optimizer.zero_grad()
+    loss.backward()
+    
+    # optimization step
+    optimizer.step()
+    
+    print(f"Step {i}, Loss: {loss.item()}")
+
+import sys
+sys.exit(0)
+
+# Sample Inference
+num_return_sequences = 5
+max_length = 30
 model.eval()  # set to evaluation mode
 model.to(DEVICE)  
-
-
 import tiktoken
 enc = tiktoken.get_encoding("gpt2")
 tokens = enc.encode("Hello, I'm a language model,")
