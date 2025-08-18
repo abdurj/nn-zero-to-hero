@@ -219,9 +219,6 @@ class DataLoader:
             
 
 # ----------------------------------------
-num_return_sequences = 5
-max_length = 30
-
 import time
 
 DEVICE = 'cpu'
@@ -233,12 +230,13 @@ elif torch.backends.mps.is_available():
 torch.manual_seed(1337)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
-
 print(f"Using device: {DEVICE}")
-# ------------
-# model = GPT.from_pretrained('gpt2')
 
 train_loader = DataLoader(B=16, T=1024)  # batch size 16, sequence length 1024
+
+torch.set_float32_matmul_precision('high')
+
+# model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig())
 model = model.to(DEVICE)
 
@@ -263,7 +261,8 @@ for i in range(50):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0) * 1000
-    print(f"Step {i}, Time: {dt:.2f} ms, Loss: {loss.item()}")
+    throughput = (train_loader.B * train_loader.T) / (t1 - t0)  # tokens per second
+    print(f"Step {i}, Loss: {loss.item()}, Time: {dt:.2f} ms, Throughput: {throughput:.2f} tokens/s")
 
 import sys
 sys.exit(0)
