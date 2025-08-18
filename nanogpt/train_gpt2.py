@@ -86,6 +86,9 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),  # final layer normalization
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        
+        # weight sharing 
+        self.transformer.wte.weight = self.lm_head.weight  # share weights between token embeddings and output layer
 
     @classmethod
     def from_pretrained(cls, model_type):
